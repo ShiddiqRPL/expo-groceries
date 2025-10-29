@@ -1,0 +1,34 @@
+# Node dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# Expo
+.expo/
+.expo-shared/
+web-build/
+
+# React Native
+ios/Pods/
+android/.gradle/
+android/app/build/
+android/build/
+*.keystore
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.sw?
+*.suo
+*.ntvs*
+# *.*
