@@ -36,8 +36,8 @@ const formatCurrency = (num) =>
 // --- Main component ---
 export default function DaftarBelanjaScreen({ navigation }) {
   const [showFilter, setShowFilter] = useState(false);
-  const [fromDate, setFromDate] = useState(new Date("2025-10-25"));
-  const [toDate, setToDate] = useState(new Date("2025-10-30"));
+  const [fromDate, setFromDate] = useState(null);
+  const [toDate, setToDate] = useState(null);
   const [showFromPicker, setShowFromPicker] = useState(false);
   const [showToPicker, setShowToPicker] = useState(false);
   const [data, setData] = useState([]);
@@ -50,15 +50,19 @@ export default function DaftarBelanjaScreen({ navigation }) {
         if (Platform.OS === "web") {
           stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
         } else {
-          stored = JSON.parse(await AsyncStorage.getItem(STORAGE_KEY)) || [];
+          const result = await AsyncStorage.getItem(STORAGE_KEY);
+          stored = result ? JSON.parse(result) : [];
         }
         setData(stored);
+        console.log("Loaded data:", stored);
       } catch (err) {
         console.error(err);
       }
     };
-    loadData();
-  }, []);
+
+    const unsubscribe = navigation.addListener("focus", loadData);
+    return unsubscribe;
+  }, [navigation]);
 
   // 🔹 Header Filter button
   useLayoutEffect(() => {
@@ -87,7 +91,16 @@ export default function DaftarBelanjaScreen({ navigation }) {
   // 🔹 Filter the data by date range
   const filteredData = data.filter((item) => {
     const d = new Date(item.date);
-    return d >= fromDate && d <= toDate;
+
+    if (isNaN(d)) return false; // skip invalid dates
+
+    // if no filter is selected, show everything
+    if (!fromDate && !toDate) return true;
+
+    if (fromDate && d < fromDate) return false;
+    if (toDate && d > toDate) return false;
+
+    return true;
   });
 
   const groupedData = groupByDate(filteredData);
@@ -104,7 +117,7 @@ export default function DaftarBelanjaScreen({ navigation }) {
                 <Text style={styles.dateLabel}>Dari: </Text>
                 <input
                   type="date"
-                  value={fromDate.toISOString().split("T")[0]}
+                  value={fromDate?.toISOString().split("T")[0] ?? ""}
                   onChange={(e) => setFromDate(new Date(e.target.value))}
                   style={{
                     paddingVertical: 8,
@@ -150,7 +163,7 @@ export default function DaftarBelanjaScreen({ navigation }) {
                 <Text style={styles.dateLabel}>Sampai: </Text>
                 <input
                   type="date"
-                  value={toDate.toISOString().split("T")[0]}
+                  value={toDate?.toISOString().split("T")[0] ?? ""}
                   onChange={(e) => setToDate(new Date(e.target.value))}
                   style={{
                     paddingVertical: 8,
@@ -188,8 +201,46 @@ export default function DaftarBelanjaScreen({ navigation }) {
               </>
             )}
           </View>
+
+          {(fromDate || toDate) && (
+            <TouchableOpacity
+              style={styles.resetButton}
+              onPress={() => {
+                setFromDate(null);
+                setToDate(null);
+              }}
+            >
+              <Ionicons name="refresh-outline" size={16} color="#007AFF" />
+              <Text style={styles.resetButtonText}>Reset Filter</Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
+
+      {/* Filter summary label */}
+      <View style={styles.summaryContainer}>
+        <Text style={styles.summaryText}>
+          {(() => {
+            const total = data.length;
+            const shown = filteredData.length;
+
+            if (!fromDate && !toDate) {
+              return `Showing all ${total} record${total !== 1 ? "s" : ""}`;
+            }
+
+            let rangeText = "";
+            if (fromDate && toDate) {
+              rangeText = `from ${fromDate.toLocaleDateString("id-ID")} to ${toDate.toLocaleDateString("id-ID")}`;
+            } else if (fromDate) {
+              rangeText = `from ${fromDate.toLocaleDateString("id-ID")}`;
+            } else if (toDate) {
+              rangeText = `until ${toDate.toLocaleDateString("id-ID")}`;
+            }
+
+            return `Showing ${shown} of ${total} record${total !== 1 ? "s" : ""} (${rangeText})`;
+          })()}
+        </Text>
+      </View>
 
       {/* Scrollable list */}
       <ScrollView contentContainerStyle={{ padding: 20 }}>
@@ -209,20 +260,27 @@ export default function DaftarBelanjaScreen({ navigation }) {
                 </View>
 
                 {records.map((item) => (
-                  <View key={item.id} style={styles.card}>
-                    <View>
-                      <Text style={styles.namaBarang}>{item.namaBarang}</Text>
-                      {item.jumlah > 0 && (
-                        <Text style={styles.itemDetail}>
-                          {formatCurrency(item.jumlah)} {item.satuan} × IDR{" "}
-                          {formatCurrency(item.hargaTotal / item.jumlah)}
-                        </Text>
-                      )}
+                  <TouchableOpacity
+                    key={item.id}
+                    activeOpacity={0.7}
+                    style={styles.cardTouchable}
+                    onPress={() => navigation.navigate("BelanjaForm", { editItem: item })}
+                  >
+                    <View style={styles.card}>
+                      <View>
+                        <Text style={styles.namaBarang}>{item.namaBarang}</Text>
+                        {item.jumlah > 0 && (
+                          <Text style={styles.itemDetail}>
+                            {formatCurrency(item.jumlah)} {item.satuan} × IDR{" "}
+                            {formatCurrency(item.hargaTotal / item.jumlah)}
+                          </Text>
+                        )}
+                      </View>
+                      <Text style={styles.hargaTotal}>
+                        IDR {formatCurrency(item.hargaTotal)}
+                      </Text>
                     </View>
-                    <Text style={styles.hargaTotal}>
-                      IDR {formatCurrency(item.hargaTotal)}
-                    </Text>
-                  </View>
+                  </TouchableOpacity>
                 ))}
               </View>
             );
@@ -252,6 +310,7 @@ const styles = StyleSheet.create({
   dateHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8, paddingHorizontal: 4 },
   dateText: { fontSize: 16, fontWeight: "700", color: "#333" },
   totalText: { fontSize: 16, fontWeight: "700", color: "#007AFF" },
+  cardTouchable: { borderRadius: 12, overflow: "hidden", marginBottom: 10, },
   card: {
     backgroundColor: "#fff",
     borderRadius: 8,
@@ -269,4 +328,35 @@ const styles = StyleSheet.create({
   namaBarang: { fontSize: 15, color: "#333", fontWeight: "600" },
   itemDetail: { fontSize: 13, color: "#666", marginTop: 2 },
   hargaTotal: { fontSize: 15, fontWeight: "700", color: "#007AFF" },
+  summaryContainer: {
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    backgroundColor: "#eef6ff",
+    borderBottomWidth: 1,
+    borderColor: "#cde0ff",
+  },
+  summaryText: {
+    fontSize: 13,
+    color: "#007AFF",
+    textAlign: "center",
+  },
+  resetButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: "#eaf3ff",
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#007AFF33",
+    alignSelf: "center",
+  },
+  resetButtonText: {
+    color: "#007AFF",
+    fontSize: 13,
+    marginLeft: 4,
+    fontWeight: "500",
+  },
 });

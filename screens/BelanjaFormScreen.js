@@ -12,8 +12,12 @@ import {
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useRoute } from "@react-navigation/native";
 
 export default function BelanjaFormScreen({ navigation }) {
+  const route = useRoute();
+  const editItem = route.params?.editItem || null; // ← detect edit mode
+
   const [date, setDate] = useState(new Date());
   const [showPicker, setShowPicker] = useState(false);
 
@@ -56,39 +60,130 @@ export default function BelanjaFormScreen({ navigation }) {
     return `${year}-${month}-${day}`;
   };
 
-  // --- Persistence ---
   const STORAGE_KEY = "DAFTAR_BELANJA";
 
+  // --- Prepopulate when editing ---
+  useEffect(() => {
+    if (editItem) {
+      setDate(new Date(editItem.date));
+      setNamaBarang(editItem.namaBarang);
+      setHargaTotalDisplay(formatNumber(editItem.hargaTotal));
+      setJumlahDisplay(editItem.jumlah ? formatNumber(editItem.jumlah) : "");
+      setSatuan(editItem.satuan || "pcs");
+      setShowDetail(!!editItem.jumlah);
+    }
+  }, [editItem]);
+
   const simpan = async (autoReset = false) => {
-    const newData = {
-      id: Date.now(),
-      date: formatDate(date),
-      namaBarang,
-      hargaTotal: hargaTotalNum,
-      jumlah: jumlahNum,
-      satuan,
-      hargaSatuan: hargaSatuanNum,
+  const newData = {
+    id: editItem?.id || Date.now(),
+    date: formatDate(date),
+    namaBarang,
+    hargaTotal: hargaTotalNum,
+    jumlah: jumlahNum,
+    satuan,
+    hargaSatuan: hargaSatuanNum,
+  };
+
+  try {
+    const getData = async () => {
+      if (Platform.OS === "web") {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      } else {
+        const stored = await AsyncStorage.getItem(STORAGE_KEY);
+        return stored ? JSON.parse(stored) : [];
+      }
     };
 
-    try {
+    const saveData = async (data) => {
       if (Platform.OS === "web") {
-        const existing = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-        localStorage.setItem(STORAGE_KEY, JSON.stringify([...existing, newData]));
-        window.alert("Data tersimpan!");
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
       } else {
-        const existing = JSON.parse(await AsyncStorage.getItem(STORAGE_KEY)) || [];
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify([...existing, newData]));
-        Alert.alert("Data tersimpan");
+        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      }
+    };
+
+    let existing = await getData();
+
+    if (editItem) {
+      // ✅ Update existing record
+      existing = existing.map((item) =>
+        item.id === editItem.id ? newData : item
+      );
+    } else {
+      // ✅ Add new record
+      existing.push(newData);
+    }
+
+    await saveData(existing);
+
+    if (Platform.OS === "web") {
+      window.alert("Data tersimpan!");
+    } else {
+      Alert.alert("Data tersimpan");
+    }
+
+    if (autoReset) { 
+      resetForm();
+    } else { 
+      if (editItem) {
+        navigation.goBack();
+      } else { 
+        navigation.replace("DaftarBelanja");
+      }
+    }
+  } catch (err) {
+    console.error(err);
+    Alert.alert("Gagal menyimpan data");
+  }
+};
+
+
+  // --- Delete (only in edit mode) ---
+  const handleDelete = async () => {
+    if (!editItem) return;
+
+    const confirmMsg = "Yakin ingin menghapus item ini?";
+    if (Platform.OS === "web") {
+      const ok = window.confirm(confirmMsg);
+      if (!ok) return;
+    } else {
+      const result = await new Promise((resolve) => {
+        Alert.alert("Konfirmasi", confirmMsg, [
+          { text: "Batal", style: "cancel", onPress: () => resolve(false) },
+          { text: "Ya, hapus", style: "destructive", onPress: () => resolve(true) },
+        ]);
+      });
+      if (!result) return;
+    }
+
+    try {
+      let existing = [];
+      if (Platform.OS === "web") {
+        existing = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      } else {
+        existing = JSON.parse(await AsyncStorage.getItem(STORAGE_KEY)) || [];
       }
 
-      if (autoReset) resetForm();
-      else navigation.navigate("DaftarBelanja");
+      const filtered = existing.filter((item) => item.id !== editItem.id);
+      if (Platform.OS === "web") {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+      } else {
+        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+      }
+
+      if (editItem) {
+        navigation.goBack();
+      } else { 
+        navigation.replace("DaftarBelanja");
+      }
     } catch (err) {
       console.error(err);
-      Alert.alert("Gagal menyimpan data");
+      Alert.alert("Gagal menghapus data");
     }
   };
 
+  // --- Reset ---
   const resetForm = () => {
     setDate(new Date());
     setNamaBarang("");
@@ -130,8 +225,15 @@ export default function BelanjaFormScreen({ navigation }) {
   return (
     <View style={{ flex: 1 }}>
       <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 120 }}>
-        <Text style={{ fontSize: 22, fontWeight: "700", textAlign: "center", marginBottom: 16 }}>
-          Form Belanja
+        <Text
+          style={{
+            fontSize: 22,
+            fontWeight: "700",
+            textAlign: "center",
+            marginBottom: 16,
+          }}
+        >
+          {editItem ? "Edit Belanja" : "Form Belanja"}
         </Text>
 
         {/* Date Picker */}
@@ -150,7 +252,10 @@ export default function BelanjaFormScreen({ navigation }) {
             }}
           />
         ) : (
-          <TouchableOpacity onPress={() => setShowPicker(true)} style={inputStyle}>
+          <TouchableOpacity
+            onPress={() => setShowPicker(true)}
+            style={inputStyle}
+          >
             <Text style={{ color: "#000" }}>{formatDate(date)}</Text>
           </TouchableOpacity>
         )}
@@ -178,7 +283,9 @@ export default function BelanjaFormScreen({ navigation }) {
 
         {/* Harga Total */}
         <Text style={inputLabelStyle}>Harga Total</Text>
-        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 12 }}>
+        <View
+          style={{ flexDirection: "row", alignItems: "center", marginBottom: 12 }}
+        >
           <View
             style={{
               backgroundColor: "#eee",
@@ -213,7 +320,14 @@ export default function BelanjaFormScreen({ navigation }) {
         </View>
 
         {/* Detail Harga */}
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 12,
+          }}
+        >
           <Text>Detail Harga</Text>
           <Switch value={showDetail} onValueChange={setShowDetail} />
         </View>
@@ -240,7 +354,9 @@ export default function BelanjaFormScreen({ navigation }) {
             <Text style={inputLabelStyle}>Harga Satuan</Text>
             <View style={{ ...inputStyle }}>
               <Text>
-                {jumlahNum > 0 ? `IDR ${formatNumber(Math.floor(hargaSatuanNum))} per ${satuan}` : "-"}
+                {jumlahNum > 0
+                  ? `IDR ${formatNumber(Math.floor(hargaSatuanNum))} per ${satuan}`
+                  : "-"}
               </Text>
             </View>
           </>
@@ -262,24 +378,66 @@ export default function BelanjaFormScreen({ navigation }) {
           borderColor: "#ddd",
         }}
       >
+        {editItem && (
+          <TouchableOpacity
+            style={{
+              flex: 1,
+              marginHorizontal: 6,
+              paddingVertical: 12,
+              borderRadius: 8,
+              backgroundColor: "#cc0000",
+              alignItems: "center",
+            }}
+            onPress={handleDelete}
+          >
+            <Text style={{ color: "#fff", fontWeight: "700" }}>Hapus</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
-          style={{ flex: 1, marginHorizontal: 6, paddingVertical: 12, borderRadius: 8, backgroundColor: "#aaa", alignItems: "center" }}
+          style={{
+            flex: 1,
+            marginHorizontal: 6,
+            paddingVertical: 12,
+            borderRadius: 8,
+            backgroundColor: "#aaa",
+            alignItems: "center",
+          }}
           onPress={confirmReset}
         >
           <Text style={{ color: "#fff", fontWeight: "700" }}>Reset</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={{ flex: 1, marginHorizontal: 6, paddingVertical: 12, borderRadius: 8, backgroundColor: "#007AFF", alignItems: "center" }}
+          style={{
+            flex: 1,
+            marginHorizontal: 6,
+            paddingVertical: 12,
+            borderRadius: 8,
+            backgroundColor: "#007AFF",
+            alignItems: "center",
+          }}
           onPress={() => simpan(false)}
         >
-          <Text style={{ color: "#fff", fontWeight: "700" }}>Simpan</Text>
+          <Text style={{ color: "#fff", fontWeight: "700" }}>
+            {editItem ? "Update" : "Simpan"}
+          </Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={{ flex: 1, marginHorizontal: 6, paddingVertical: 12, borderRadius: 8, backgroundColor: "#28a745", alignItems: "center" }}
-          onPress={() => simpan(true)}
-        >
-          <Text style={{ color: "#fff", fontWeight: "700" }}>Simpan & Buat Lagi</Text>
-        </TouchableOpacity>
+        {!editItem && (
+          <TouchableOpacity
+            style={{
+              flex: 1,
+              marginHorizontal: 6,
+              paddingVertical: 12,
+              borderRadius: 8,
+              backgroundColor: "#28a745",
+              alignItems: "center",
+            }}
+            onPress={() => simpan(true)}
+          >
+            <Text style={{ color: "#fff", fontWeight: "700" }}>
+              Simpan & Buat Lagi
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );

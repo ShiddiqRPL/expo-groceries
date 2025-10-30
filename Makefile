@@ -15,7 +15,7 @@ up:
 
 
 shell:
-	docker-compose run --rm --service-ports $(SERVICE) /bin/bash
+	docker exec -it expo-groceries-expo-1 bash
 
 
 create-app:
@@ -32,3 +32,9 @@ clean:
 
 volumes:
 	docker volume ls | grep expo_ || true
+
+permission-local:
+	sudo chown -R $(shell whoami):$(shell whoami) .
+
+permission-root:
+	sudo chown -R root:root .
