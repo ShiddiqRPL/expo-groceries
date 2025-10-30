@@ -6,10 +6,12 @@ import {
   StyleSheet,
   TouchableOpacity,
   Platform,
+  Alert,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { HeaderBackButton } from "@react-navigation/elements";
 
 const STORAGE_KEY = "DAFTAR_BELANJA";
 
@@ -42,7 +44,10 @@ export default function DaftarBelanjaScreen({ navigation }) {
   const [showToPicker, setShowToPicker] = useState(false);
   const [data, setData] = useState([]);
 
-  // Load data from storage on mount
+  // 🟢 Multi-select states
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+
   useEffect(() => {
     const loadData = async () => {
       try {
@@ -54,7 +59,6 @@ export default function DaftarBelanjaScreen({ navigation }) {
           stored = result ? JSON.parse(result) : [];
         }
         setData(stored);
-        console.log("Loaded data:", stored);
       } catch (err) {
         console.error(err);
       }
@@ -64,50 +68,120 @@ export default function DaftarBelanjaScreen({ navigation }) {
     return unsubscribe;
   }, [navigation]);
 
-  // 🔹 Header Filter button
+  // 🔹 Header
   useLayoutEffect(() => {
     navigation.setOptions({
-      title: "Daftar Belanja",
-      headerRight: () => (
-        <TouchableOpacity
-          onPress={() => setShowFilter((prev) => !prev)}
-          style={{
-            marginRight: 16,
-            backgroundColor: showFilter ? "#FF3B30" : "#007AFF",
-            padding: 6,
-            borderRadius: 8,
-          }}
-        >
-          <Ionicons
-            name={showFilter ? "close-outline" : "filter-outline"}
-            size={22}
-            color="#fff"
-          />
-        </TouchableOpacity>
+      title: selectionMode
+        ? `${selectedIds.size} dipilih`
+        : "Daftar Belanja",
+      headerRight: () =>
+        selectionMode ? (
+          <TouchableOpacity
+            onPress={handleDeleteSelected}
+            style={{
+              marginRight: 16,
+              backgroundColor: "#FF3B30",
+              padding: 6,
+              borderRadius: 8,
+            }}
+          >
+            <Ionicons name="trash-outline" size={22} color="#fff" />
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            onPress={() => setShowFilter((prev) => !prev)}
+            style={{
+              marginRight: 16,
+              backgroundColor: showFilter ? "#FF3B30" : "#007AFF",
+              padding: 6,
+              borderRadius: 8,
+            }}
+          >
+            <Ionicons
+              name={showFilter ? "close-outline" : "filter-outline"}
+              size={22}
+              color="#fff"
+            />
+          </TouchableOpacity>
+        ),
+      headerLeft: ({ canGoBack }) => (
+        selectionMode ? (
+          <TouchableOpacity
+            onPress={() => {
+              setSelectionMode(false);
+              setSelectedIds(new Set());
+            }}
+            style={{ marginLeft: 16 }}
+          >
+            <Ionicons name="close-outline" size={24} color="#333" />
+          </TouchableOpacity>
+        ) : (
+          canGoBack && <HeaderBackButton onPress={() => navigation.goBack()} />
+        )
       ),
     });
-  }, [navigation, showFilter]);
+  }, [navigation, showFilter, selectionMode, selectedIds]);
 
-  // 🔹 Filter the data by date range
+  // 🔹 Filtering
   const filteredData = data.filter((item) => {
     const d = new Date(item.date);
-
-    if (isNaN(d)) return false; // skip invalid dates
-
-    // if no filter is selected, show everything
+    if (isNaN(d)) return false;
     if (!fromDate && !toDate) return true;
-
     if (fromDate && d < fromDate) return false;
     if (toDate && d > toDate) return false;
-
     return true;
   });
 
   const groupedData = groupByDate(filteredData);
 
+  // 🔹 Multi-select handlers
+  const toggleSelect = (id) => {
+    const newSet = new Set(selectedIds);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    setSelectedIds(newSet);
+  };
+
+  const handleLongPress = (id) => {
+    setSelectionMode(true);
+    setSelectedIds(new Set([id]));
+  };
+
+  const handleDeleteSelected = async () => {
+    if (Platform.OS === "web") {
+      const confirmed = window.confirm(`Yakin ingin menghapus ${selectedIds.size} item?`);
+      if (!confirmed) return;
+
+      const remaining = data.filter(item => !selectedIds.has(item.id));
+      setData(remaining);
+      setSelectionMode(false);
+      setSelectedIds(new Set());
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(remaining));
+    } else {
+      Alert.alert(
+        "Hapus item",
+        `Yakin ingin menghapus ${selectedIds.size} item?`,
+        [
+          { text: "Batal", style: "cancel" },
+          {
+            text: "Hapus",
+            style: "destructive",
+            onPress: async () => {
+              const remaining = data.filter(item => !selectedIds.has(item.id));
+              setData(remaining);
+              setSelectionMode(false);
+              setSelectedIds(new Set());
+              await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(remaining));
+            },
+          },
+        ]
+      );
+    }
+  };
+
   return (
     <View style={styles.container}>
-      {/* Filter section */}
+      {/* 🔹 Filter Section */}
       {showFilter && (
         <View style={styles.filterContainer}>
           {/* From Date */}
@@ -119,15 +193,7 @@ export default function DaftarBelanjaScreen({ navigation }) {
                   type="date"
                   value={fromDate?.toISOString().split("T")[0] ?? ""}
                   onChange={(e) => setFromDate(new Date(e.target.value))}
-                  style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 6,
-                    borderWidth: 1,
-                    borderColor: "#ddd",
-                    backgroundColor: "#fff",
-                    fontSize: 14,
-                  }}
+                  style={styles.webDateInput}
                 />
               </>
             ) : (
@@ -138,7 +204,7 @@ export default function DaftarBelanjaScreen({ navigation }) {
                 >
                   <Text style={styles.dateLabel}>Dari: </Text>
                   <Text style={styles.dateValue}>
-                    {fromDate.toLocaleDateString("id-ID")}
+                    {fromDate?.toLocaleDateString("id-ID") ?? "-"}
                   </Text>
                 </TouchableOpacity>
                 {showFromPicker && (
@@ -165,15 +231,7 @@ export default function DaftarBelanjaScreen({ navigation }) {
                   type="date"
                   value={toDate?.toISOString().split("T")[0] ?? ""}
                   onChange={(e) => setToDate(new Date(e.target.value))}
-                  style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 6,
-                    borderWidth: 1,
-                    borderColor: "#ddd",
-                    backgroundColor: "#fff",
-                    fontSize: 14,
-                  }}
+                  style={styles.webDateInput}
                 />
               </>
             ) : (
@@ -184,7 +242,7 @@ export default function DaftarBelanjaScreen({ navigation }) {
                 >
                   <Text style={styles.dateLabel}>Sampai: </Text>
                   <Text style={styles.dateValue}>
-                    {toDate.toLocaleDateString("id-ID")}
+                    {toDate?.toLocaleDateString("id-ID") ?? "-"}
                   </Text>
                 </TouchableOpacity>
                 {showToPicker && (
@@ -217,7 +275,7 @@ export default function DaftarBelanjaScreen({ navigation }) {
         </View>
       )}
 
-      {/* Filter summary label */}
+      {/* 🔹 Summary */}
       <View style={styles.summaryContainer}>
         <Text style={styles.summaryText}>
           {(() => {
@@ -242,7 +300,7 @@ export default function DaftarBelanjaScreen({ navigation }) {
         </Text>
       </View>
 
-      {/* Scrollable list */}
+      {/* 🔹 List */}
       <ScrollView contentContainerStyle={{ padding: 20 }}>
         {Object.keys(groupedData)
           .sort((a, b) => new Date(b) - new Date(a))
@@ -250,36 +308,82 @@ export default function DaftarBelanjaScreen({ navigation }) {
             const records = groupedData[date];
             const totalPerDay = records.reduce((sum, r) => sum + r.hargaTotal, 0);
 
+            // check if all items in this date group are selected
+            const allSelected = records.every((r) => selectedIds.has(r.id));
+            const partiallySelected = !allSelected && records.some((r) => selectedIds.has(r.id));
+
+            const handleGroupToggle = () => {
+              const newSet = new Set(selectedIds);
+
+              if (allSelected) {
+                // unselect all in this date
+                records.forEach((r) => newSet.delete(r.id));
+              } else {
+                // select all in this date
+                records.forEach((r) => newSet.add(r.id));
+              }
+
+              setSelectedIds(newSet);
+            };
+
             return (
               <View key={date} style={styles.dateGroup}>
                 <View style={styles.dateHeader}>
+                  {selectionMode && (
+                    <TouchableOpacity onPress={handleGroupToggle} style={styles.groupCheckbox}>
+                      <Ionicons
+                        name={
+                          allSelected
+                            ? "checkbox"
+                            : partiallySelected
+                            ? "remove-circle-outline"
+                            : "square-outline"
+                        }
+                        size={22}
+                        color={allSelected || partiallySelected ? "#007AFF" : "#ccc"}
+                      />
+                    </TouchableOpacity>
+                  )}
+
                   <Text style={styles.dateText}>{formatDateLabel(date)}</Text>
-                  <Text style={styles.totalText}>
-                    IDR {formatCurrency(totalPerDay)}
-                  </Text>
+                  <Text style={styles.totalText}>IDR {formatCurrency(totalPerDay)}</Text>
                 </View>
 
                 {records.map((item) => (
                   <TouchableOpacity
                     key={item.id}
-                    activeOpacity={0.7}
-                    style={styles.cardTouchable}
-                    onPress={() => navigation.navigate("BelanjaForm", { editItem: item })}
+                    onLongPress={() => setSelectionMode(true)}
+                    onPress={() => {
+                      if (selectionMode) {
+                        const newSet = new Set(selectedIds);
+                        if (newSet.has(item.id)) newSet.delete(item.id);
+                        else newSet.add(item.id);
+                        setSelectedIds(newSet);
+                      }
+                    }}
+                    style={[
+                      styles.card,
+                      selectionMode && selectedIds.has(item.id) && styles.cardSelected,
+                    ]}
                   >
-                    <View style={styles.card}>
-                      <View>
-                        <Text style={styles.namaBarang}>{item.namaBarang}</Text>
-                        {item.jumlah > 0 && (
-                          <Text style={styles.itemDetail}>
-                            {formatCurrency(item.jumlah)} {item.satuan} × IDR{" "}
-                            {formatCurrency(item.hargaTotal / item.jumlah)}
-                          </Text>
-                        )}
-                      </View>
-                      <Text style={styles.hargaTotal}>
-                        IDR {formatCurrency(item.hargaTotal)}
-                      </Text>
+                    {selectionMode && (
+                      <Ionicons
+                        name={selectedIds.has(item.id) ? "checkbox" : "square-outline"}
+                        size={22}
+                        color={selectedIds.has(item.id) ? "#007AFF" : "#ccc"}
+                        style={{ marginRight: 8 }}
+                      />
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.namaBarang}>{item.namaBarang}</Text>
+                      {item.jumlah > 0 && (
+                        <Text style={styles.itemDetail}>
+                          {formatCurrency(item.jumlah)} {item.satuan} × IDR{" "}
+                          {formatCurrency(item.hargaTotal / item.jumlah)}
+                        </Text>
+                      )}
                     </View>
+                    <Text style={styles.hargaTotal}>IDR {formatCurrency(item.hargaTotal)}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -309,6 +413,7 @@ const styles = StyleSheet.create({
   dateGroup: { marginBottom: 20 },
   dateHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8, paddingHorizontal: 4 },
   dateText: { fontSize: 16, fontWeight: "700", color: "#333" },
+  groupCheckbox: { marginRight: 8 },
   totalText: { fontSize: 16, fontWeight: "700", color: "#007AFF" },
   cardTouchable: { borderRadius: 12, overflow: "hidden", marginBottom: 10, },
   card: {
@@ -324,6 +429,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 2,
     elevation: 2,
+  },
+  cardSelected: {
+    backgroundColor: "#E6F0FF",
   },
   namaBarang: { fontSize: 15, color: "#333", fontWeight: "600" },
   itemDetail: { fontSize: 13, color: "#666", marginTop: 2 },
