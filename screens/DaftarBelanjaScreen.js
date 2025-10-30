@@ -352,13 +352,17 @@ export default function DaftarBelanjaScreen({ navigation }) {
                 {records.map((item) => (
                   <TouchableOpacity
                     key={item.id}
-                    onLongPress={() => setSelectionMode(true)}
+                    onLongPress={() => handleLongPress(item.id)}
                     onPress={() => {
                       if (selectionMode) {
+                        // toggle selection
                         const newSet = new Set(selectedIds);
                         if (newSet.has(item.id)) newSet.delete(item.id);
                         else newSet.add(item.id);
                         setSelectedIds(newSet);
+                      } else {
+                        // normal click: go to edit form
+                        navigation.navigate("BelanjaForm", { editItem: item });
                       }
                     }}
                     style={[
