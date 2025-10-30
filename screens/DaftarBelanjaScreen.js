@@ -222,7 +222,7 @@ export default function DaftarBelanjaScreen({ navigation }) {
                 </TouchableOpacity>
                 {showFromPicker && (
                   <DateTimePicker
-                    value={fromDate}
+                    value={fromDate || new Date()}
                     mode="date"
                     display="default"
                     onChange={(e, selected) => {
@@ -260,7 +260,7 @@ export default function DaftarBelanjaScreen({ navigation }) {
                 </TouchableOpacity>
                 {showToPicker && (
                   <DateTimePicker
-                    value={toDate}
+                    value={toDate || new Date()}
                     mode="date"
                     display="default"
                     onChange={(e, selected) => {
