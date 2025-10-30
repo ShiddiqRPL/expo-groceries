@@ -2,11 +2,12 @@ import React, { useState, useLayoutEffect, useEffect } from "react";
 import {
   View,
   Text,
-  ScrollView,
+  SectionList,
   StyleSheet,
   TouchableOpacity,
   Platform,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Ionicons } from "@expo/vector-icons";
@@ -14,14 +15,17 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { HeaderBackButton } from "@react-navigation/elements";
 
 const STORAGE_KEY = "DAFTAR_BELANJA";
+const PAGE_SIZE = 20; // load 20 items per batch
 
-// --- Helper functions ---
+// Helper functions
 const groupByDate = (data) =>
-  data.reduce((acc, item) => {
-    if (!acc[item.date]) acc[item.date] = [];
-    acc[item.date].push(item);
-    return acc;
-  }, {});
+  Object.entries(
+    data.reduce((acc, item) => {
+      if (!acc[item.date]) acc[item.date] = [];
+      acc[item.date].push(item);
+      return acc;
+    }, {})
+  ).map(([date, items]) => ({ title: date, data: items }));
 
 const formatDateLabel = (dateStr) => {
   const d = new Date(dateStr);
@@ -35,40 +39,42 @@ const formatDateLabel = (dateStr) => {
 const formatCurrency = (num) =>
   new Intl.NumberFormat("id-ID").format(Math.round(num || 0));
 
-// --- Main component ---
 export default function DaftarBelanjaScreen({ navigation }) {
   const [showFilter, setShowFilter] = useState(false);
   const [fromDate, setFromDate] = useState(null);
   const [toDate, setToDate] = useState(null);
   const [showFromPicker, setShowFromPicker] = useState(false);
   const [showToPicker, setShowToPicker] = useState(false);
-  const [data, setData] = useState([]);
 
-  // 🟢 Multi-select states
+  const [data, setData] = useState([]);
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  // Multi-select
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
 
+  // Load full data
   useEffect(() => {
     const loadData = async () => {
+      let stored = [];
       try {
-        let stored = [];
         if (Platform.OS === "web") {
           stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
         } else {
           const result = await AsyncStorage.getItem(STORAGE_KEY);
           stored = result ? JSON.parse(result) : [];
         }
-        setData(stored);
       } catch (err) {
         console.error(err);
       }
+      setData(stored);
     };
-
     const unsubscribe = navigation.addListener("focus", loadData);
     return unsubscribe;
   }, [navigation]);
 
-  // 🔹 Header
+  // Header
   useLayoutEffect(() => {
     navigation.setOptions({
       title: selectionMode
@@ -104,7 +110,7 @@ export default function DaftarBelanjaScreen({ navigation }) {
             />
           </TouchableOpacity>
         ),
-      headerLeft: ({ canGoBack }) => (
+      headerLeft: ({ canGoBack }) =>
         selectionMode ? (
           <TouchableOpacity
             onPress={() => {
@@ -117,12 +123,11 @@ export default function DaftarBelanjaScreen({ navigation }) {
           </TouchableOpacity>
         ) : (
           canGoBack && <HeaderBackButton onPress={() => navigation.goBack()} />
-        )
-      ),
+        ),
     });
   }, [navigation, showFilter, selectionMode, selectedIds]);
 
-  // 🔹 Filtering
+  // Filtered data
   const filteredData = data.filter((item) => {
     const d = new Date(item.date);
     if (isNaN(d)) return false;
@@ -132,9 +137,20 @@ export default function DaftarBelanjaScreen({ navigation }) {
     return true;
   });
 
-  const groupedData = groupByDate(filteredData);
+  // Lazy-loaded slice
+  const displayedData = filteredData.slice(0, loadedCount);
+  const groupedData = groupByDate(displayedData);
 
-  // 🔹 Multi-select handlers
+  const loadMore = () => {
+    if (loadingMore || loadedCount >= filteredData.length) return;
+    setLoadingMore(true);
+    setTimeout(() => {
+      setLoadedCount((prev) => Math.min(prev + PAGE_SIZE, filteredData.length));
+      setLoadingMore(false);
+    }, 300); // simulate load delay
+  };
+
+  // Multi-select toggle
   const toggleSelect = (id) => {
     const newSet = new Set(selectedIds);
     if (newSet.has(id)) newSet.delete(id);
@@ -149,38 +165,35 @@ export default function DaftarBelanjaScreen({ navigation }) {
 
   const handleDeleteSelected = async () => {
     if (Platform.OS === "web") {
-      const confirmed = window.confirm(`Yakin ingin menghapus ${selectedIds.size} item?`);
+      const confirmed = window.confirm(
+        `Yakin ingin menghapus ${selectedIds.size} item?`
+      );
       if (!confirmed) return;
-
-      const remaining = data.filter(item => !selectedIds.has(item.id));
+      const remaining = data.filter((item) => !selectedIds.has(item.id));
       setData(remaining);
       setSelectionMode(false);
       setSelectedIds(new Set());
       localStorage.setItem(STORAGE_KEY, JSON.stringify(remaining));
     } else {
-      Alert.alert(
-        "Hapus item",
-        `Yakin ingin menghapus ${selectedIds.size} item?`,
-        [
-          { text: "Batal", style: "cancel" },
-          {
-            text: "Hapus",
-            style: "destructive",
-            onPress: async () => {
-              const remaining = data.filter(item => !selectedIds.has(item.id));
-              setData(remaining);
-              setSelectionMode(false);
-              setSelectedIds(new Set());
-              await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(remaining));
-            },
+      Alert.alert("Hapus item", `Yakin ingin menghapus ${selectedIds.size} item?`, [
+        { text: "Batal", style: "cancel" },
+        {
+          text: "Hapus",
+          style: "destructive",
+          onPress: async () => {
+            const remaining = data.filter((item) => !selectedIds.has(item.id));
+            setData(remaining);
+            setSelectionMode(false);
+            setSelectedIds(new Set());
+            await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(remaining));
           },
-        ]
-      );
+        },
+      ]);
     }
   };
 
   return (
-    <View style={styles.container}>
+    <View style={{ flex: 1 }}>
       {/* 🔹 Filter Section */}
       {showFilter && (
         <View style={styles.filterContainer}>
@@ -260,18 +273,25 @@ export default function DaftarBelanjaScreen({ navigation }) {
             )}
           </View>
 
-          {(fromDate || toDate) && (
-            <TouchableOpacity
-              style={styles.resetButton}
-              onPress={() => {
-                setFromDate(null);
-                setToDate(null);
-              }}
-            >
-              <Ionicons name="refresh-outline" size={16} color="#007AFF" />
-              <Text style={styles.resetButtonText}>Reset Filter</Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity
+            disabled={!(fromDate || toDate)}
+            style={[
+              styles.resetButton,
+              !(fromDate || toDate) ? styles.resetButtonDisabled : ""
+            ]}
+            onPress={() => {
+              setFromDate(null);
+              setToDate(null);
+            }}
+          >
+            <Ionicons name="refresh-outline" size={16} color="#007AFF" style={[
+              !(fromDate || toDate) ? styles.resetButtonTextDisabled : ""
+            ]} />
+            <Text style={[
+              styles.resetButtonText,
+              !(fromDate || toDate) ? styles.resetButtonTextDisabled : ""
+            ]}>Reset Filter</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -300,103 +320,98 @@ export default function DaftarBelanjaScreen({ navigation }) {
         </Text>
       </View>
 
-      {/* 🔹 List */}
-      <ScrollView contentContainerStyle={{ padding: 20 }}>
-        {Object.keys(groupedData)
-          .sort((a, b) => new Date(b) - new Date(a))
-          .map((date) => {
-            const records = groupedData[date];
-            const totalPerDay = records.reduce((sum, r) => sum + r.hargaTotal, 0);
+      {/* SectionList for lazy loading */}
+      <SectionList
+        sections={groupedData}
+        keyExtractor={(item) => item.id.toString()}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
+        contentContainerStyle={{ padding: 20 }}
+        ListFooterComponent={
+          loadingMore && <ActivityIndicator size="small" color="#007AFF" />
+        }
+        renderSectionHeader={({ section, index }) => {
+          const records = section.data;
+          const allSelected = records.every((r) => selectedIds.has(r.id));
+          const partiallySelected = !allSelected && records.some((r) => selectedIds.has(r.id));
 
-            // check if all items in this date group are selected
-            const allSelected = records.every((r) => selectedIds.has(r.id));
-            const partiallySelected = !allSelected && records.some((r) => selectedIds.has(r.id));
+          const handleGroupToggle = () => {
+            const newSet = new Set(selectedIds);
+            if (allSelected) {
+              records.forEach((r) => newSet.delete(r.id));
+            } else {
+              records.forEach((r) => newSet.add(r.id));
+            }
+            setSelectedIds(newSet);
+          };
 
-            const handleGroupToggle = () => {
-              const newSet = new Set(selectedIds);
+          const totalPerDay = records.reduce((sum, r) => sum + r.hargaTotal, 0);
+          const isFirstRecord = index === 0;
 
-              if (allSelected) {
-                // unselect all in this date
-                records.forEach((r) => newSet.delete(r.id));
-              } else {
-                // select all in this date
-                records.forEach((r) => newSet.add(r.id));
-              }
-
-              setSelectedIds(newSet);
-            };
-
-            return (
-              <View key={date} style={styles.dateGroup}>
-                <View style={styles.dateHeader}>
-                  {selectionMode && (
-                    <TouchableOpacity onPress={handleGroupToggle} style={styles.groupCheckbox}>
-                      <Ionicons
-                        name={
-                          allSelected
-                            ? "checkbox"
-                            : partiallySelected
-                            ? "remove-circle-outline"
-                            : "square-outline"
-                        }
-                        size={22}
-                        color={allSelected || partiallySelected ? "#007AFF" : "#ccc"}
-                      />
-                    </TouchableOpacity>
-                  )}
-
-                  <Text style={styles.dateText}>{formatDateLabel(date)}</Text>
-                  <Text style={styles.totalText}>IDR {formatCurrency(totalPerDay)}</Text>
-                </View>
-
-                {records.map((item) => (
-                  <TouchableOpacity
-                    key={item.id}
-                    onLongPress={() => handleLongPress(item.id)}
-                    onPress={() => {
-                      if (selectionMode) {
-                        // toggle selection
-                        const newSet = new Set(selectedIds);
-                        if (newSet.has(item.id)) newSet.delete(item.id);
-                        else newSet.add(item.id);
-                        setSelectedIds(newSet);
-                      } else {
-                        // normal click: go to edit form
-                        navigation.navigate("BelanjaForm", { editItem: item });
-                      }
-                    }}
-                    style={[
-                      styles.card,
-                      selectionMode && selectedIds.has(item.id) && styles.cardSelected,
-                    ]}
-                  >
-                    {selectionMode && (
-                      <Ionicons
-                        name={selectedIds.has(item.id) ? "checkbox" : "square-outline"}
-                        size={22}
-                        color={selectedIds.has(item.id) ? "#007AFF" : "#ccc"}
-                        style={{ marginRight: 8 }}
-                      />
-                    )}
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.namaBarang}>{item.namaBarang}</Text>
-                      {item.jumlah > 0 && (
-                        <Text style={styles.itemDetail}>
-                          {formatCurrency(item.jumlah)} {item.satuan} × IDR{" "}
-                          {formatCurrency(item.hargaTotal / item.jumlah)}
-                        </Text>
-                      )}
-                    </View>
-                    <Text style={styles.hargaTotal}>IDR {formatCurrency(item.hargaTotal)}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            );
-          })}
-      </ScrollView>
+          return (
+            <View 
+              style={[
+                styles.dateHeader,
+                !isFirstRecord ? { paddingTop: 12, paddingBottom: 0 } : {},
+              ]}
+            >
+              {selectionMode && (
+                <TouchableOpacity onPress={handleGroupToggle} style={styles.groupCheckbox}>
+                  <Ionicons
+                    name={
+                      allSelected
+                        ? "checkbox"
+                        : partiallySelected
+                        ? "remove-circle-outline"
+                        : "square-outline"
+                    }
+                    size={22}
+                    color={allSelected || partiallySelected ? "#007AFF" : "#ccc"}
+                  />
+                </TouchableOpacity>
+              )}
+              <Text style={styles.dateText}>{formatDateLabel(section.title)}</Text>
+              <Text style={styles.totalText}>IDR {formatCurrency(totalPerDay)}</Text>
+            </View>
+          );
+        }}
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            onPress={() => {
+              if (selectionMode) toggleSelect(item.id);
+              else navigation.navigate("BelanjaForm", { editItem: item });
+            }}
+            onLongPress={() => handleLongPress(item.id)}
+            style={[
+              styles.card,
+              selectionMode && selectedIds.has(item.id) && styles.cardSelected,
+            ]}
+          >
+            {selectionMode && (
+              <Ionicons
+                name={selectedIds.has(item.id) ? "checkbox" : "square-outline"}
+                size={22}
+                color={selectedIds.has(item.id) ? "#007AFF" : "#ccc"}
+                style={{ marginRight: 8 }}
+              />
+            )}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.namaBarang}>{item.namaBarang}</Text>
+              {item.jumlah > 0 && (
+                <Text style={styles.itemDetail}>
+                  {formatCurrency(item.jumlah)} {item.satuan} × IDR{" "}
+                  {formatCurrency(item.hargaTotal / item.jumlah)}
+                </Text>
+              )}
+            </View>
+            <Text style={styles.hargaTotal}>IDR {formatCurrency(item.hargaTotal)}</Text>
+          </TouchableOpacity>
+        )}
+      />
     </View>
   );
 }
+
 
 // --- Styles (same as your existing ones) ---
 const styles = StyleSheet.create({
@@ -415,7 +430,7 @@ const styles = StyleSheet.create({
   dateLabel: { fontSize: 14, color: "#333" },
   dateValue: { fontSize: 14, color: "#007AFF", fontWeight: "500" },
   dateGroup: { marginBottom: 20 },
-  dateHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8, paddingHorizontal: 4 },
+  dateHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8, paddingHorizontal: 4, paddingVertical: 8},
   dateText: { fontSize: 16, fontWeight: "700", color: "#333" },
   groupCheckbox: { marginRight: 8 },
   totalText: { fontSize: 16, fontWeight: "700", color: "#007AFF" },
@@ -465,10 +480,18 @@ const styles = StyleSheet.create({
     borderColor: "#007AFF33",
     alignSelf: "center",
   },
+  resetButtonDisabled: {
+    backgroundColor: "#e4e4e4ff",
+    borderColor: "#b6b6b6ff",
+    cursor: "not-allowed",
+  },
   resetButtonText: {
     color: "#007AFF",
     fontSize: 13,
     marginLeft: 4,
     fontWeight: "500",
+  },
+  resetButtonTextDisabled: {
+    color: "#a5a5a5ff",
   },
 });
